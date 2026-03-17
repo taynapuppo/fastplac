@@ -193,11 +193,10 @@ if "credentials" not in st.session_state:
     # Produção: lê do Streamlit Secrets
     try:
         if "google" in st.secrets:
-            st.session_state.credentials = json.loads(st.secrets["google"]["credentials"])
+            st.session_state.credentials = dict(st.secrets["google"]["credentials"])
         else:
             raise KeyError
     except Exception:
-        # Desenvolvimento: lê da pasta secrets/
         cred_path = os.path.join(SECRETS_DIR, "credentials.json")
         if os.path.exists(cred_path):
             with open(cred_path) as f:
