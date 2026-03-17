@@ -190,10 +190,14 @@ if "pdf_nome"   not in st.session_state: st.session_state.pdf_nome   = ""
 if "link_drive" not in st.session_state: st.session_state.link_drive = ""
 
 if "credentials" not in st.session_state:
-    # Produção: lê do Streamlit Secrets
     try:
         if "google" in st.secrets:
-            st.session_state.credentials = dict(st.secrets["google"]["credentials"])
+            cred = st.secrets["google"]["credentials"]
+            # Streamlit já parseia como dicionário
+            if isinstance(cred, str):
+                st.session_state.credentials = json.loads(cred)
+            else:
+                st.session_state.credentials = dict(cred)
         else:
             raise KeyError
     except Exception:
