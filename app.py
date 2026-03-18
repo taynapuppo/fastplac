@@ -3,7 +3,6 @@ import sys
 import json
 import base64
 import streamlit as st
-from datetime import datetime
 
 # ── Paths das pastas ──
 ROOT_DIR    = os.path.dirname(__file__)
@@ -15,6 +14,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, "services"))
 
 from field_config import TEMPLATE_IDS, FOLDER_ID, CAMPOS_COMUNS, CAMPOS_ESPECIFICOS
 from google_api import gerar_pdf_consolidado
+from report import gerar_relatorio
 
 st.set_page_config(
     page_title="FastPlac",
@@ -144,20 +144,23 @@ h1, h2, h3 {
     margin-left: 6px;
 }
 .drive-link {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    background: #f0f2ff;
-    border: 1px solid #c5cbf5;
+    background: #242480;
     border-radius: 6px;
-    padding: 8px 14px;
-    font-size: 0.88rem;
-    font-weight: 500;
-    color: #242480 !important;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #FFFFFF !important;
     text-decoration: none !important;
-    margin-top: 8px;
+    width: 100%;
+    box-sizing: border-box;
 }
-.drive-link:hover { background: #e4e7ff; }
+.drive-link:hover {
+    background: #1a1a60;
+}
 
 /* ── Inputs ── */
 .stTextInput input, .stNumberInput input {
@@ -187,13 +190,13 @@ hr { border-color: #e8eaf0 !important; }
 if "placas"     not in st.session_state: st.session_state.placas     = []
 if "pdf_pronto" not in st.session_state: st.session_state.pdf_pronto = None
 if "pdf_nome"   not in st.session_state: st.session_state.pdf_nome   = ""
-if "link_drive" not in st.session_state: st.session_state.link_drive = ""
+if "link_drive"   not in st.session_state: st.session_state.link_drive   = ""
+if "relatorio"    not in st.session_state: st.session_state.relatorio    = None
 
 if "credentials" not in st.session_state:
     try:
         if "google" in st.secrets:
             cred = st.secrets["google"]["credentials"]
-            # Streamlit já parseia como dicionário
             if isinstance(cred, str):
                 st.session_state.credentials = json.loads(cred)
             else:
@@ -348,6 +351,7 @@ else:
             st.session_state.pdf_pronto = pdf_bytes
             st.session_state.pdf_nome   = nome_arquivo
             st.session_state.link_drive = link_drive
+            st.session_state.relatorio  = None  # reseta relatório anterior
             barra.progress(1.0, text="Concluído!")
             status.success("PDF gerado e salvo na pasta de concluídos.")
 
@@ -356,28 +360,47 @@ else:
             status.empty()
             st.error(f"Erro ao gerar o PDF:\n\n```\n{e}\n```")
 
-    if st.session_state.link_drive:
-        st.markdown(
-            f'<a class="drive-link" href="{st.session_state.link_drive}" target="_blank">'
-            f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#242480" stroke-width="2">'
-            f'<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
-            f'</svg>Abrir no Drive</a>',
-            unsafe_allow_html=True
-        )
+    # ── Botões pós-geração ──
+    if st.session_state.pdf_pronto:
+        _, col_dl, col_rel, col_drive, _ = st.columns([4, 2, 2, 2, 4])
 
-# ── Rodapé ──
-ano = datetime.now().year
-st.markdown(f"""
-<div style="
-    bottom: 0; left: 0; right: 0;
-    margin-top: 40px;
-    border-top: 1px solid #e0e4f5;
-    padding: 10px 24px;
-    font-family: 'Sora', sans-serif;
-    font-size: 0.78rem;
-    color: #888;
-    text-align: center;
-">
-    {ano} © FastPlac by <a href="https://aguiasistemas.com.br/" target="_blank" style="color:#242480; font-weight:700; text-decoration:none;">Águia Sistemas</a> &nbsp;·&nbsp; Version 1.0.0
-</div>
-""", unsafe_allow_html=True)
+        with col_dl:
+            st.download_button(
+                label="Baixar PDF",
+                data=st.session_state.pdf_pronto,
+                file_name=f"{st.session_state.pdf_nome}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+            )
+
+        with col_rel:
+            if not st.session_state.relatorio:
+                if st.button("Gerar Relatório", use_container_width=True, type="primary"):
+                    cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
+                    pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
+                    st.session_state.relatorio = gerar_relatorio(
+                        placas=st.session_state.placas,
+                        nome_cliente=cliente_rel,
+                        nome_pedido=pedido_rel,
+                    )
+                    st.rerun()
+            else:
+                st.download_button(
+                    label="Baixar Relatório",
+                    data=st.session_state.relatorio,
+                    file_name=f"Relatório - {st.session_state.pdf_nome}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                )
+
+        with col_drive:
+            if st.session_state.link_drive:
+                st.markdown(
+                    '<a class="drive-link" href="' + st.session_state.link_drive + '" target="_blank">'
+                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2">'
+                    '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+                    '</svg>&nbsp;Abrir no Drive</a>',
+                    unsafe_allow_html=True
+                )
