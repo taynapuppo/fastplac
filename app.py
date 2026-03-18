@@ -3,12 +3,12 @@ import sys
 import json
 import base64
 import streamlit as st
+from datetime import datetime
 
 # ── Paths das pastas ──
 ROOT_DIR    = os.path.dirname(__file__)
 SECRETS_DIR = os.path.join(ROOT_DIR, "secrets")
 
-# Adiciona config/ e services/ ao path para importar os módulos
 sys.path.insert(0, os.path.join(ROOT_DIR, "config"))
 sys.path.insert(0, os.path.join(ROOT_DIR, "services"))
 
@@ -31,7 +31,6 @@ html, body, [class*="css"] {
     font-family: 'Sora', sans-serif;
 }
 
-/* ── Sidebar base ── */
 [data-testid="stSidebar"] {
     background-color: #242480 !important;
     min-width: 280px !important;
@@ -48,7 +47,6 @@ html, body, [class*="css"] {
     border: none !important;
 }
 
-/* ── Botão ✕ remover individual ── */
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {
     background-color: transparent !important;
     border: 1px solid rgba(255,255,255,0.25) !important;
@@ -68,7 +66,6 @@ html, body, [class*="css"] {
     border-color: rgba(255, 100, 100, 0.5) !important;
 }
 
-/* ── Botão Limpar todas ── */
 [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
     background-color: rgba(255,255,255,0.12) !important;
     color: #FFFFFF !important;
@@ -86,7 +83,6 @@ html, body, [class*="css"] {
     background-color: rgba(255,255,255,0.22) !important;
 }
 
-/* ── Botões primários fora da sidebar ── */
 [data-testid="stMain"] [data-testid="stBaseButton-primary"],
 .stDownloadButton > button {
     background-color: #242480 !important;
@@ -105,7 +101,6 @@ html, body, [class*="css"] {
     transform: translateY(-1px);
 }
 
-/* ── Títulos ── */
 h1, h2, h3 {
     font-family: 'Sora', sans-serif !important;
     font-weight: 600 !important;
@@ -158,11 +153,8 @@ h1, h2, h3 {
     width: 100%;
     box-sizing: border-box;
 }
-.drive-link:hover {
-    background: #1a1a60;
-}
+.drive-link:hover { background: #1a1a60; }
 
-/* ── Inputs ── */
 .stTextInput input, .stNumberInput input {
     border-radius: 6px !important;
     font-family: 'Sora', sans-serif !important;
@@ -177,7 +169,6 @@ h1, h2, h3 {
     font-family: 'Sora', sans-serif !important;
 }
 
-/* ── Progress bar ── */
 .stProgress > div > div > div {
     background-color: #242480 !important;
 }
@@ -190,8 +181,8 @@ hr { border-color: #e8eaf0 !important; }
 if "placas"     not in st.session_state: st.session_state.placas     = []
 if "pdf_pronto" not in st.session_state: st.session_state.pdf_pronto = None
 if "pdf_nome"   not in st.session_state: st.session_state.pdf_nome   = ""
-if "link_drive"   not in st.session_state: st.session_state.link_drive   = ""
-if "relatorio"    not in st.session_state: st.session_state.relatorio    = None
+if "link_drive" not in st.session_state: st.session_state.link_drive = ""
+if "relatorio"  not in st.session_state: st.session_state.relatorio  = None
 
 if "credentials" not in st.session_state:
     try:
@@ -262,6 +253,7 @@ with st.sidebar:
         if st.button("Limpar todas", use_container_width=True, type="primary"):
             st.session_state.placas     = []
             st.session_state.pdf_pronto = None
+            st.session_state.relatorio  = None
             st.rerun()
     else:
         st.markdown(
@@ -309,6 +301,7 @@ if tipo_selecionado:
             form_values["Cliente"] = form_values["Cliente"].strip().upper()
             st.session_state.placas.append({"tipo": tipo_selecionado, "dados": form_values.copy()})
             st.session_state.pdf_pronto = None
+            st.session_state.relatorio  = None
             st.success(f"{tipo_selecionado} adicionada à lista.")
             st.rerun()
 
@@ -351,7 +344,16 @@ else:
             st.session_state.pdf_pronto = pdf_bytes
             st.session_state.pdf_nome   = nome_arquivo
             st.session_state.link_drive = link_drive
-            st.session_state.relatorio  = None  # reseta relatório anterior
+
+            # Gera o relatório automaticamente junto com o PDF
+            cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
+            pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
+            st.session_state.relatorio = gerar_relatorio(
+                placas=st.session_state.placas,
+                nome_cliente=cliente_rel,
+                nome_pedido=pedido_rel,
+            )
+
             barra.progress(1.0, text="Concluído!")
             status.success("PDF gerado e salvo na pasta de concluídos.")
 
@@ -375,17 +377,7 @@ else:
             )
 
         with col_rel:
-            if not st.session_state.relatorio:
-                if st.button("Gerar Relatório", use_container_width=True, type="primary"):
-                    cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
-                    pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
-                    st.session_state.relatorio = gerar_relatorio(
-                        placas=st.session_state.placas,
-                        nome_cliente=cliente_rel,
-                        nome_pedido=pedido_rel,
-                    )
-                    st.rerun()
-            else:
+            if st.session_state.relatorio:
                 st.download_button(
                     label="Baixar Relatório",
                     data=st.session_state.relatorio,
@@ -404,3 +396,19 @@ else:
                     '</svg>&nbsp;Abrir no Drive</a>',
                     unsafe_allow_html=True
                 )
+
+# ── Rodapé ──
+ano = datetime.now().year
+st.markdown(f"""
+<div style="
+    bottom: 0; left: 0; right: 0;
+    border-top: 1px solid #e0e4f5;
+    padding: 10px 24px;
+    font-family: 'Sora', sans-serif;
+    font-size: 0.78rem;
+    color: #888;
+    text-align: center;
+">
+    {ano} © FastPlac by <a href="https://aguiasistemas.com.br/" target="_blank" style="color:#242480; font-weight:700; text-decoration:none;">Águia Sistemas</a> &nbsp;·&nbsp; Version 1.0.0
+</div>
+""", unsafe_allow_html=True)
