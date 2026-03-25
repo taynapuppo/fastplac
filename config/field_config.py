@@ -14,6 +14,7 @@ TEMPLATE_IDS = {
     "Placa Mezanino Carga Piso":  "1VgzTAC2n7yE3XuDF8tiP1lALWT6ISBA2aRr9p_yNFzM",
     "Placa Dinamico":             "1dJ7wkIA-gmdvOHCJ-wzjk-gCC-aztWlLIr0p17tCuk0",
     "Placa Dinamico Peso Maximo": "1ad88ne9EYxabZQfLW4_I8l-0biOx_cRs69nIXJA9jmU",
+    "Placa Especial Furukawa":     "1zFYJPwazjsNBjkN12tR_ynegM4xyuobb2XLsKNgxl6g",
 }
 
 FOLDER_ID = "1S2mj8z1hv5sKmzXKaRcwUo20hdhIapDQ"
@@ -98,4 +99,14 @@ CAMPOS_ESPECIFICOS = {
         {"key": "N° de Níveis",                           "label": "N° de Níveis",                           "type": "text"},
         {"key": "N° de Paletes em Profundidade",          "label": "N° de Paletes em Profundidade",          "type": "text"},
     ],
+    "Placa Especial Furukawa": [
+        {"key": "N° de Níveis",           "label": "N° de Níveis",                "type": "text"},
+        {"key": "Altura do 1° Nível",     "label": "Altura do 1° Nível",          "type": "text"},
+        {"key": "Nível 1",                "label": "Nível 1",                     "type": "text"},
+        {"key": "Nível 2",                "label": "Nível 2",                     "type": "text"},
+        {"key": "Nível 3",                "label": "Nível 3",                     "type": "text"},
+        {"key": "Nível 4",                "label": "Nível 4",                     "type": "text"},
+        {"key": "Nível 5",                "label": "Nível 5",                     "type": "text"},
+        {"key": "Nível 6",                "label": "Nível 6",                     "type": "text"},       
+    ]   
 }

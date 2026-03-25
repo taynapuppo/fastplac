@@ -27,14 +27,21 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap');
 
+/* ── Forçar modo light ── */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+    color-scheme: light !important;
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
+}
+[data-theme="dark"] { color-scheme: light !important; }
+
 html, body, [class*="css"] {
     font-family: 'Sora', sans-serif;
 }
 
+/* ── Sidebar ── */
 [data-testid="stSidebar"] {
     background-color: #242480 !important;
-    min-width: 280px !important;
-    max-width: 320px !important;
 }
 [data-testid="stSidebar"] * {
     color: #FFFFFF !important;
@@ -46,7 +53,6 @@ html, body, [class*="css"] {
     background-color: rgba(255,255,255,0.1) !important;
     border: none !important;
 }
-
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {
     background-color: transparent !important;
     border: 1px solid rgba(255,255,255,0.25) !important;
@@ -65,7 +71,6 @@ html, body, [class*="css"] {
     background-color: rgba(255, 80, 80, 0.35) !important;
     border-color: rgba(255, 100, 100, 0.5) !important;
 }
-
 [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
     background-color: rgba(255,255,255,0.12) !important;
     color: #FFFFFF !important;
@@ -83,6 +88,7 @@ html, body, [class*="css"] {
     background-color: rgba(255,255,255,0.22) !important;
 }
 
+/* ── Botões principais ── */
 [data-testid="stMain"] [data-testid="stBaseButton-primary"],
 .stDownloadButton > button {
     background-color: #242480 !important;
@@ -101,6 +107,7 @@ html, body, [class*="css"] {
     transform: translateY(-1px);
 }
 
+/* ── Tipografia ── */
 h1, h2, h3 {
     font-family: 'Sora', sans-serif !important;
     font-weight: 600 !important;
@@ -114,7 +121,7 @@ h1, h2, h3 {
     border-left: 4px solid #242480;
     padding-left: 12px;
     margin-bottom: 1rem;
-    margin-top: 0.5rem;
+    margin-top: 1.5rem;
 }
 .sidebar-logo {
     display: flex;
@@ -155,10 +162,13 @@ h1, h2, h3 {
 }
 .drive-link:hover { background: #1a1a60; }
 
+/* ── Inputs ── */
 .stTextInput input, .stNumberInput input {
     border-radius: 6px !important;
     font-family: 'Sora', sans-serif !important;
     border-color: #d0d5e8 !important;
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
 }
 .stTextInput input:focus, .stNumberInput input:focus {
     border-color: #242480 !important;
@@ -167,12 +177,51 @@ h1, h2, h3 {
 .stSelectbox > div > div {
     border-radius: 6px !important;
     font-family: 'Sora', sans-serif !important;
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
 }
 
+/* ── Responsividade ── */
+[data-testid="stMain"] .block-container {
+    padding: 1.5rem 1rem !important;
+    max-width: 100% !important;
+}
+
+/* Botões sempre largura total no mobile */
+@media (max-width: 768px) {
+    [data-testid="stMain"] .block-container {
+        padding: 1rem 0.5rem !important;
+    }
+    .section-title {
+        font-size: 1.1rem;
+    }
+    /* Faz colunas stackarem verticalmente */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        min-width: 100% !important;
+        width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+    /* Botões ocupam largura total */
+    [data-testid="stMain"] [data-testid="stBaseButton-primary"],
+    .stDownloadButton > button {
+        width: 100% !important;
+    }
+    .drive-link {
+        width: 100% !important;
+    }
+}
+
+/* ── Tira a barra colorida do Streamlit ── */            
+div[data-testid="stDecoration"] { display: none !important; }
+header[data-testid="stHeader"]  { background: none !important; }
+
+/* ── Misc ── */
 .stProgress > div > div > div {
     background-color: #242480 !important;
 }
-
 hr { border-color: #e8eaf0 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -288,7 +337,7 @@ if tipo_selecionado:
                         campo["label"], key=key_widget,
                     )
 
-        col_btn, _ = st.columns([1, 7])
+        col_btn, _ = st.columns([2, 6])
         with col_btn:
             adicionar = st.button("Adicionar à lista", type="primary", use_container_width=True)
 
@@ -321,7 +370,7 @@ else:
     nome_padrao       = f"Placas - {cliente_principal} ({pedido_principal})"
     nome_arquivo = st.text_input("Nome do arquivo PDF", value=nome_padrao)
 
-    col_gerar, _ = st.columns([1, 7])
+    col_gerar, _ = st.columns([2, 6])
     with col_gerar:
         gerar = st.button("Gerar PDF", type="primary", use_container_width=True)
 
@@ -345,7 +394,6 @@ else:
             st.session_state.pdf_nome   = nome_arquivo
             st.session_state.link_drive = link_drive
 
-            # Gera o relatório automaticamente junto com o PDF
             cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
             pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
             st.session_state.relatorio = gerar_relatorio(
@@ -362,9 +410,8 @@ else:
             status.empty()
             st.error(f"Erro ao gerar o PDF:\n\n```\n{e}\n```")
 
-    # ── Botões pós-geração ──
     if st.session_state.pdf_pronto:
-        _, col_dl, col_rel, col_drive, _ = st.columns([4, 2, 2, 2, 4])
+        _, col_dl, col_rel, col_drive, _ = st.columns([1, 3, 3, 3, 1])
 
         with col_dl:
             st.download_button(
