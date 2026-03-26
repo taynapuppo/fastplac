@@ -232,7 +232,8 @@ if "pdf_pronto"  not in st.session_state: st.session_state.pdf_pronto  = None
 if "pdf_nome"    not in st.session_state: st.session_state.pdf_nome    = ""
 if "link_drive"  not in st.session_state: st.session_state.link_drive  = ""
 if "relatorio"   not in st.session_state: st.session_state.relatorio   = None
-if "slides_info" not in st.session_state: st.session_state.slides_info = []
+if "slides_info"   not in st.session_state: st.session_state.slides_info   = []
+if "link_slides"   not in st.session_state: st.session_state.link_slides   = ""
 
 if "credentials" not in st.session_state:
     try:
@@ -305,6 +306,7 @@ with st.sidebar:
             st.session_state.pdf_pronto  = None
             st.session_state.relatorio   = None
             st.session_state.slides_info = []
+            st.session_state.link_slides  = ""
             st.rerun()
     else:
         st.markdown(
@@ -385,7 +387,7 @@ else:
             status.markdown(f"_{msg}_")
 
         try:
-            pdf_bytes, link_drive, slides_info = gerar_pdf_consolidado(
+            pdf_bytes, link_drive, slides_info, link_slides = gerar_pdf_consolidado(
                 placas=st.session_state.placas,
                 folder_id=FOLDER_ID,
                 template_ids=TEMPLATE_IDS,
@@ -396,6 +398,7 @@ else:
             st.session_state.pdf_nome    = nome_arquivo
             st.session_state.link_drive  = link_drive
             st.session_state.slides_info = slides_info
+            st.session_state.link_slides  = link_slides
 
             cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
             pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
