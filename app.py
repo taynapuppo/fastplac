@@ -121,7 +121,7 @@ h1, h2, h3 {
     border-left: 4px solid #242480;
     padding-left: 12px;
     margin-bottom: 1rem;
-    margin-top: 1.5rem;
+    margin-top: 0.5rem;
 }
 .sidebar-logo {
     display: flex;
@@ -214,24 +214,25 @@ h1, h2, h3 {
     }
 }
 
-/* ── Tira a barra colorida do Streamlit ── */            
-div[data-testid="stDecoration"] { display: none !important; }
-header[data-testid="stHeader"]  { background: none !important; }
-
 /* ── Misc ── */
 .stProgress > div > div > div {
     background-color: #242480 !important;
 }
 hr { border-color: #e8eaf0 !important; }
+
+/* ── Remove barra colorida do topo ── */
+div[data-testid="stDecoration"] { display: none !important; }
+header[data-testid="stHeader"]  { background: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Session state ──
-if "placas"     not in st.session_state: st.session_state.placas     = []
-if "pdf_pronto" not in st.session_state: st.session_state.pdf_pronto = None
-if "pdf_nome"   not in st.session_state: st.session_state.pdf_nome   = ""
-if "link_drive" not in st.session_state: st.session_state.link_drive = ""
-if "relatorio"  not in st.session_state: st.session_state.relatorio  = None
+if "placas"      not in st.session_state: st.session_state.placas      = []
+if "pdf_pronto"  not in st.session_state: st.session_state.pdf_pronto  = None
+if "pdf_nome"    not in st.session_state: st.session_state.pdf_nome    = ""
+if "link_drive"  not in st.session_state: st.session_state.link_drive  = ""
+if "relatorio"   not in st.session_state: st.session_state.relatorio   = None
+if "slides_info" not in st.session_state: st.session_state.slides_info = []
 
 if "credentials" not in st.session_state:
     try:
@@ -300,9 +301,10 @@ with st.sidebar:
 
         st.divider()
         if st.button("Limpar todas", use_container_width=True, type="primary"):
-            st.session_state.placas     = []
-            st.session_state.pdf_pronto = None
-            st.session_state.relatorio  = None
+            st.session_state.placas      = []
+            st.session_state.pdf_pronto  = None
+            st.session_state.relatorio   = None
+            st.session_state.slides_info = []
             st.rerun()
     else:
         st.markdown(
@@ -383,16 +385,17 @@ else:
             status.markdown(f"_{msg}_")
 
         try:
-            pdf_bytes, link_drive = gerar_pdf_consolidado(
+            pdf_bytes, link_drive, slides_info = gerar_pdf_consolidado(
                 placas=st.session_state.placas,
                 folder_id=FOLDER_ID,
                 template_ids=TEMPLATE_IDS,
                 nome_arquivo=nome_arquivo,
                 progress_callback=atualizar_progresso,
             )
-            st.session_state.pdf_pronto = pdf_bytes
-            st.session_state.pdf_nome   = nome_arquivo
-            st.session_state.link_drive = link_drive
+            st.session_state.pdf_pronto  = pdf_bytes
+            st.session_state.pdf_nome    = nome_arquivo
+            st.session_state.link_drive  = link_drive
+            st.session_state.slides_info = slides_info
 
             cliente_rel = st.session_state.placas[0]["dados"].get("Cliente", "")
             pedido_rel  = st.session_state.placas[0]["dados"].get("N° do Pedido", "")
@@ -440,7 +443,7 @@ else:
                     '<a class="drive-link" href="' + st.session_state.link_drive + '" target="_blank">'
                     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2">'
                     '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
-                    '</svg>&nbsp;Abrir no Drive</a>',
+                    '</svg>&nbsp;Abrir PDF no Drive</a>',
                     unsafe_allow_html=True
                 )
 

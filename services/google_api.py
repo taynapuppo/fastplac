@@ -20,7 +20,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/presentations",
 ]
 
-# Paths para secrets/ (raiz do projeto)
 _BASE_DIR    = os.path.dirname(os.path.dirname(__file__))
 _SECRETS_DIR = os.path.join(_BASE_DIR, "secrets")
 TOKEN_FILE   = os.path.join(_SECRETS_DIR, "token.json")
@@ -30,7 +29,6 @@ CREDS_FILE   = os.path.join(_SECRETS_DIR, "client_secret.json")
 def get_services():
     creds = None
 
-    # 1. Produção: token via Streamlit Secrets
     try:
         import streamlit as st
         if "google" in st.secrets and "token" in st.secrets["google"]:
@@ -39,11 +37,9 @@ def get_services():
     except Exception:
         pass
 
-    # 2. Desenvolvimento: token em secrets/token.json
     if creds is None and os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
-    # 3. Renova token se expirado
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(google.auth.transport.requests.Request())
         try:
@@ -52,7 +48,6 @@ def get_services():
         except Exception:
             pass
 
-    # 4. Sem token: abre browser para login (só funciona local)
     if not creds or not creds.valid:
         try:
             import streamlit as st
@@ -95,6 +90,18 @@ def copy_template(drive, template_id: str, name: str, folder_id: str) -> str:
     body = {"name": name, "parents": [folder_id]}
     result = _execute_with_retry(drive.files().copy(fileId=template_id, body=body))
     return result["id"]
+
+
+def rename_file(drive, file_id: str, new_name: str) -> str:
+    """Renomeia o arquivo e retorna o webViewLink."""
+    result = _execute_with_retry(
+        drive.files().update(
+            fileId=file_id,
+            body={"name": new_name},
+            fields="id, webViewLink",
+        )
+    )
+    return result.get("webViewLink", "")
 
 
 def delete_file(drive, file_id: str):
@@ -171,9 +178,16 @@ def gerar_pdf_consolidado(
     template_ids: dict,
     nome_arquivo: str = "Placas",
     progress_callback=None,
-) -> tuple[bytes, str]:
+) -> tuple[bytes, str, list[dict]]:
+    """
+    Retorna:
+        merged      — bytes do PDF consolidado
+        link_pdf    — link do PDF no Drive
+        slides_info — lista de dicts com {tipo, cliente, link} para cada Slides salvo
+    """
     drive, slides_svc, creds = get_services()
-    pdf_parts: list[bytes] = []
+    pdf_parts:   list[bytes] = []
+    slides_info: list[dict]  = []
     total = len(placas)
 
     for idx, placa in enumerate(placas):
@@ -184,8 +198,13 @@ def gerar_pdf_consolidado(
         if progress_callback:
             progress_callback(idx / total, f"Processando placa {idx + 1}/{total}: {tipo}")
 
-        nome_temp = f"TEMP_{tipo}_{dados.get('Cliente', '')}_{int(time.time() * 1000)}"
-        file_id   = copy_template(drive, template_ids[tipo], nome_temp, folder_id)
+        # Nome final do Slides: "Slides - <tipo> - <cliente> - <pedido>"
+        cliente    = dados.get("Cliente", "")
+        pedido     = dados.get("N° do Pedido", "")
+        nome_slide = f"Slides - {cliente} - {pedido}"
+        nome_temp  = f"TEMP_{nome_slide}_{int(time.time() * 1000)}"
+
+        file_id = copy_template(drive, template_ids[tipo], nome_temp, folder_id)
 
         if qtd > 1:
             duplicate_first_slide(slides_svc, file_id, qtd - 1)
@@ -193,7 +212,10 @@ def gerar_pdf_consolidado(
         fill_placeholders(slides_svc, file_id, dados)
         pdf_bytes = export_as_pdf(creds, file_id)
         pdf_parts.append(pdf_bytes)
-        delete_file(drive, file_id)
+
+        # Renomeia e mantém o Slides no Drive (não deleta)
+        link_slide = rename_file(drive, file_id, nome_slide)
+        slides_info.append({"tipo": tipo, "cliente": cliente, "link": link_slide})
 
         if idx < total - 1:
             time.sleep(1.5)
@@ -202,7 +224,7 @@ def gerar_pdf_consolidado(
     merged = merge_pdfs(pdf_parts)
 
     if progress_callback: progress_callback(0.95, "Salvando na pasta de concluídos...")
-    link_drive = upload_pdf(drive, merged, nome_arquivo, folder_id)
+    link_pdf = upload_pdf(drive, merged, nome_arquivo, folder_id)
 
     if progress_callback: progress_callback(1.0, "Concluído!")
-    return merged, link_drive
+    return merged, link_pdf, slides_info
