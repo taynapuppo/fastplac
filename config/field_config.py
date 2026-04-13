@@ -15,6 +15,7 @@ TEMPLATE_IDS = {
     "Placa Dinamico":             "1dJ7wkIA-gmdvOHCJ-wzjk-gCC-aztWlLIr0p17tCuk0",
     "Placa Dinamico Peso Maximo": "1ad88ne9EYxabZQfLW4_I8l-0biOx_cRs69nIXJA9jmU",
     "Placa Especial Furukawa":     "1zFYJPwazjsNBjkN12tR_ynegM4xyuobb2XLsKNgxl6g",
+    "Placa Especial Furukawa 2":   "1CNxtXT1TRHN7hc_ChoWzl-vhZs-d7gdVoydjNfMTskU",
 }
 
 FOLDER_ID = "1S2mj8z1hv5sKmzXKaRcwUo20hdhIapDQ"
@@ -108,5 +109,18 @@ CAMPOS_ESPECIFICOS = {
         {"key": "Nível 4",                "label": "Nível 4",                     "type": "text"},
         {"key": "Nível 5",                "label": "Nível 5",                     "type": "text"},
         {"key": "Nível 6",                "label": "Nível 6",                     "type": "text"},       
+    ],   
+    "Placa Especial Furukawa 2": [
+        {"key": "N° de Níveis",           "label": "N° de Níveis",                "type": "text"},
+        {"key": "Altura do 1° Nível",     "label": "Altura do 1° Nível",          "type": "text"},
+        {"key": "Nível 1",                "label": "Nível 1",                     "type": "text"},
+        {"key": "Nível 2",                "label": "Nível 2",                     "type": "text"},
+        {"key": "Nível 3",                "label": "Nível 3",                     "type": "text"},
+        {"key": "Nível 4",                "label": "Nível 4",                     "type": "text"},
+        {"key": "Nível 5",                "label": "Nível 5",                     "type": "text"},
+        {"key": "Nível 6",                "label": "Nível 6",                     "type": "text"},  
+        {"key": "Nível 7",                "label": "Nível 7",                     "type": "text"},
+        {"key": "Nível 8",                "label": "Nível 8",                     "type": "text"},  
+        {"key": "Nível 9",                "label": "Nível 9",                     "type": "text"},              
     ]   
 }
