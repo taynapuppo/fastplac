@@ -16,6 +16,7 @@ TEMPLATE_IDS = {
     "Placa Dinamico Peso Maximo": "1ad88ne9EYxabZQfLW4_I8l-0biOx_cRs69nIXJA9jmU",
     "Placa Especial Furukawa":     "1zFYJPwazjsNBjkN12tR_ynegM4xyuobb2XLsKNgxl6g",
     "Placa Especial Furukawa 2":   "1CNxtXT1TRHN7hc_ChoWzl-vhZs-d7gdVoydjNfMTskU",
+    "Placa Amazon":                "1PAiDfSWqjPjmjAlhq-3nVT-OApj7B9d_2OQyhwjhVvo"
 }
 
 FOLDER_ID = "1S2mj8z1hv5sKmzXKaRcwUo20hdhIapDQ"
@@ -122,5 +123,10 @@ CAMPOS_ESPECIFICOS = {
         {"key": "Nível 7",                "label": "Nível 7",                     "type": "text"},
         {"key": "Nível 8",                "label": "Nível 8",                     "type": "text"},  
         {"key": "Nível 9",                "label": "Nível 9",                     "type": "text"},              
-    ]   
+    ],
+    "Placa Amazon": [
+        {"key": "Peso por Plano",                "label": "Peso por Plano",               "type": "text"},
+        {"key": "N° de Níveis",                  "label": "N° de Níveis",                 "type": "text"},
+        {"key": "Altura do 1° Nível",            "label": "Altura do 1° Nível",           "type": "text"},
+    ] 
 }
