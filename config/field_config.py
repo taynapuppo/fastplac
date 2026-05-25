@@ -7,16 +7,12 @@ TEMPLATE_IDS = {
     "Placa PP Palete e Plano":    "1ypY-k2HkTWbfS-L2ePYTpD8-kdzR76i5QWkZTB-p1Rk",
     "Placa PP Peso Plano":        "14yuJSLFjlRdV6Ws6vPzVps4UPKEa7Ls2Ax72JmGu0bo",
     "Placa PP Peso por Nivel":    "1caWkpmv9XdYrpIWEOBeCwam5oi3FhD-xlg4ACBVd5sc",
-    "Placa Mercado Livre":        "1rllpTeqLacZiqeCmd2X9sy1zNKgfTBVhHe2N0_TXi-o",
     "Placa Flow Rack":            "1QM2yzANFF1ltUCzfV_jA0QD1KTTkIeTm-HEKKQGKqjE",
     "Placa Drive In":             "137X648yX51Ebx83UhSOO7pCGdGYEoPSo4JQMoibY_fo",
     "Placa Mezanino":             "1rEbylWDSrhoygX02waFcLBt5kgLTnHWD_YCJNSc9KMo",
     "Placa Mezanino Carga Piso":  "1VgzTAC2n7yE3XuDF8tiP1lALWT6ISBA2aRr9p_yNFzM",
     "Placa Dinamico":             "1dJ7wkIA-gmdvOHCJ-wzjk-gCC-aztWlLIr0p17tCuk0",
-    "Placa Dinamico Peso Maximo": "1ad88ne9EYxabZQfLW4_I8l-0biOx_cRs69nIXJA9jmU",
-    "Placa Especial Furukawa":     "1zFYJPwazjsNBjkN12tR_ynegM4xyuobb2XLsKNgxl6g",
-    "Placa Especial Furukawa 2":   "1CNxtXT1TRHN7hc_ChoWzl-vhZs-d7gdVoydjNfMTskU",
-    "Placa Amazon":                "1PAiDfSWqjPjmjAlhq-3nVT-OApj7B9d_2OQyhwjhVvo"
+    "Placa Dinamico Peso Maximo": "1ad88ne9EYxabZQfLW4_I8l-0biOx_cRs69nIXJA9jmU"
 }
 
 FOLDER_ID = "1S2mj8z1hv5sKmzXKaRcwUo20hdhIapDQ"
@@ -70,12 +66,6 @@ CAMPOS_ESPECIFICOS = {
         {"key": "N° de Níveis",                       "label": "N° de Níveis",                          "type": "text"},
         {"key": "N° de Paletes em Profundidade",      "label": "N° de Paletes em Profundidade",         "type": "text"},
     ],
-    "Placa Mercado Livre": [
-        {"key": "Dimensões",                   "label": "Dimensões",                  "type": "text"},
-        {"key": "Peso Máximo",                 "label": "Peso Máximo",                "type": "text"},
-        {"key": "Art de Projeto",              "label": "Art de Projeto",             "type": "text"},
-        {"key": "Art de Montagem",             "label": "Art de Montagem",            "type": "text"},
-    ],
     "Placa PP Palete e Plano": [
         {"key": "Dimensões",                     "label": "Dimensões",                    "type": "text"},
         {"key": "Peso por Plano",                "label": "Peso por Plano",               "type": "text"},
@@ -100,33 +90,5 @@ CAMPOS_ESPECIFICOS = {
         {"key": "Peso Máximo",                            "label": "Peso Máximo",                            "type": "text"},
         {"key": "N° de Níveis",                           "label": "N° de Níveis",                           "type": "text"},
         {"key": "N° de Paletes em Profundidade",          "label": "N° de Paletes em Profundidade",          "type": "text"},
-    ],
-    "Placa Especial Furukawa": [
-        {"key": "N° de Níveis",           "label": "N° de Níveis",                "type": "text"},
-        {"key": "Altura do 1° Nível",     "label": "Altura do 1° Nível",          "type": "text"},
-        {"key": "Nível 1",                "label": "Nível 1",                     "type": "text"},
-        {"key": "Nível 2",                "label": "Nível 2",                     "type": "text"},
-        {"key": "Nível 3",                "label": "Nível 3",                     "type": "text"},
-        {"key": "Nível 4",                "label": "Nível 4",                     "type": "text"},
-        {"key": "Nível 5",                "label": "Nível 5",                     "type": "text"},
-        {"key": "Nível 6",                "label": "Nível 6",                     "type": "text"},       
-    ],   
-    "Placa Especial Furukawa 2": [
-        {"key": "N° de Níveis",           "label": "N° de Níveis",                "type": "text"},
-        {"key": "Altura do 1° Nível",     "label": "Altura do 1° Nível",          "type": "text"},
-        {"key": "Nível 1",                "label": "Nível 1",                     "type": "text"},
-        {"key": "Nível 2",                "label": "Nível 2",                     "type": "text"},
-        {"key": "Nível 3",                "label": "Nível 3",                     "type": "text"},
-        {"key": "Nível 4",                "label": "Nível 4",                     "type": "text"},
-        {"key": "Nível 5",                "label": "Nível 5",                     "type": "text"},
-        {"key": "Nível 6",                "label": "Nível 6",                     "type": "text"},  
-        {"key": "Nível 7",                "label": "Nível 7",                     "type": "text"},
-        {"key": "Nível 8",                "label": "Nível 8",                     "type": "text"},  
-        {"key": "Nível 9",                "label": "Nível 9",                     "type": "text"},              
-    ],
-    "Placa Amazon": [
-        {"key": "Peso por Plano",                "label": "Peso por Plano",               "type": "text"},
-        {"key": "N° de Níveis",                  "label": "N° de Níveis",                 "type": "text"},
-        {"key": "Altura do 1° Nível",            "label": "Altura do 1° Nível",           "type": "text"},
-    ] 
+    ]
 }
