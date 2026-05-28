@@ -146,14 +146,20 @@ def _iter_all_shapes(shapes):
 
 
 def _substituir_em_text_frame(text_frame, replacements: dict):
-    """Aplica normalização e substituição em todos os parágrafos de um text_frame."""
+    """
+    Aplica normalização e substituição em todos os parágrafos de um text_frame.
+    Usa re.IGNORECASE para replicar o comportamento padrão da Slides API
+    (matchCase: false) — ex: {{CLIENTE}} bate com a chave 'Cliente'.
+    """
+    import re
     for para in text_frame.paragraphs:
         _normalizar_runs(para)
         for run in para.runs:
+            text = run.text or ""
             for key, value in replacements.items():
-                placeholder = f"{{{{{key}}}}}"
-                if placeholder in (run.text or ""):
-                    run.text = run.text.replace(placeholder, value)
+                pattern = re.escape(f"{{{{{key}}}}}")
+                text = re.sub(pattern, lambda _: value, text, flags=re.IGNORECASE)
+            run.text = text
 
 
 def _fill_pptx_placeholders(pptx_bytes: bytes, data: dict) -> bytes:
