@@ -1,8 +1,11 @@
 import io
 import os
+import re
 import json
 import time
 import copy
+import html as _html_mod
+import zipfile
 import tempfile
 import requests as http_requests
 import google.auth.transport.requests
@@ -12,7 +15,6 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
 from pypdf import PdfWriter, PdfReader
-from pptx import Presentation as PptxPresentation
 from lxml import etree
 
 SCOPES = [
@@ -78,7 +80,7 @@ def get_services():
 
 
 # ─────────────────────────────────────────────────────────────
-#  Retry para Drive API (ainda usada para upload/export)
+#  Retry para Drive API
 # ─────────────────────────────────────────────────────────────
 
 def _execute_with_retry(request, max_retries: int = 7):
@@ -99,7 +101,7 @@ def _execute_with_retry(request, max_retries: int = 7):
 # ─────────────────────────────────────────────────────────────
 
 def _download_template_pptx(creds, template_id: str) -> bytes:
-    """Baixa um Google Slides como PPTX. Usa autenticação OAuth2."""
+    """Baixa um Google Slides como PPTX."""
     if creds.expired and creds.refresh_token:
         creds.refresh(google.auth.transport.requests.Request())
     url  = f"https://docs.google.com/presentation/d/{template_id}/export/pptx"
@@ -113,84 +115,89 @@ def _download_template_pptx(creds, template_id: str) -> bytes:
 
 
 # ─────────────────────────────────────────────────────────────
-#  Preenchimento LOCAL de placeholders via python-pptx
+#  Preenchimento LOCAL de placeholders via XML direto no ZIP
 # ─────────────────────────────────────────────────────────────
 
-def _normalizar_runs(paragraph):
-    """
-    Consolida o texto de todos os runs de um parágrafo em um único run,
-    preservando a formatação do primeiro run.
-    Necessário porque o Google Slides frequentemente fragmenta texto
-    como {{chave}} em múltiplos runs ao exportar como PPTX.
-    """
-    runs = paragraph.runs
-    if len(runs) <= 1:
-        return
-
-    full_text = "".join(r.text or "" for r in runs)
-    runs[0].text = full_text
-    for r in runs[1:]:
-        r.text = ""
+def _xml_escape(text: str) -> str:
+    """Escapa caracteres especiais XML no valor substituído."""
+    return _html_mod.escape(str(text), quote=False)
 
 
-def _iter_all_shapes(shapes):
+def _substituir_em_paragrafo_xml(para_xml: str, replacements: dict) -> str:
     """
-    Itera todos os shapes recursivamente, entrando em grupos (MSO_SHAPE_TYPE.GROUP = 6).
-    A API do Slides fazia replaceAllText em toda a apresentação, incluindo shapes
-    agrupados — este iterador replica esse comportamento.
-    """
-    for shape in shapes:
-        yield shape
-        if shape.shape_type == 6:          # GROUP
-            yield from _iter_all_shapes(shape.shapes)
+    Recebe o XML de um parágrafo <a:p>, concatena o texto de todos os <a:t>,
+    aplica os replacements (case-insensitive) e reconstrói colocando o texto
+    resultante no primeiro <a:t>, zerando os demais.
 
+    Trabalha diretamente no XML — sem python-pptx — então imagens,
+    QR codes e qualquer outro elemento não-texto ficam intactos.
+    """
+    texts = re.findall(r'<a:t(?:[^>]*)>(.*?)</a:t>', para_xml, re.DOTALL)
+    if not texts:
+        return para_xml
 
-def _substituir_em_text_frame(text_frame, replacements: dict):
-    """
-    Aplica normalização e substituição em todos os parágrafos de um text_frame.
-    Usa re.IGNORECASE para replicar o comportamento padrão da Slides API
-    (matchCase: false) — ex: {{CLIENTE}} bate com a chave 'Cliente'.
-    """
-    import re
-    for para in text_frame.paragraphs:
-        _normalizar_runs(para)
-        for run in para.runs:
-            text = run.text or ""
-            for key, value in replacements.items():
-                pattern = re.escape(f"{{{{{key}}}}}")
-                text = re.sub(pattern, lambda _: value, text, flags=re.IGNORECASE)
-            run.text = text
+    full_text = ''.join(texts)
+    new_text  = full_text
+
+    for key, value in replacements.items():
+        pattern  = re.escape(f'{{{{{key}}}}}')
+        new_text = re.sub(pattern, _xml_escape(value), new_text, flags=re.IGNORECASE)
+
+    if new_text == full_text:
+        return para_xml  # Sem alteração — retorna intacto
+
+    # Reconstrói: primeiro <a:t> recebe o novo texto, demais ficam vazios
+    first_done = False
+
+    def replace_t(m):
+        nonlocal first_done
+        attrs = m.group(1)  # atributos do <a:t>, ex: xml:space="preserve"
+        if not first_done:
+            first_done = True
+            return f'<a:t{attrs}>{new_text}</a:t>'
+        return '<a:t></a:t>'
+
+    return re.sub(r'<a:t([^>]*)>(.*?)</a:t>', replace_t, para_xml, flags=re.DOTALL)
 
 
 def _fill_pptx_placeholders(pptx_bytes: bytes, data: dict) -> bytes:
     """
-    Preenche placeholders no formato {{chave}} em um arquivo PPTX.
-    Trabalha inteiramente em memória, sem nenhuma chamada de API.
-    Itera recursivamente em group shapes, replicando o comportamento
-    do replaceAllText da Slides API.
+    Substitui {{chave}} diretamente no XML do PPTX via manipulação de ZIP.
+
+    Não passa pelo modelo de objetos do python-pptx, portanto:
+    - Preserva 100% das imagens e QR codes originais
+    - Lida com placeholders fragmentados entre múltiplos runs
+    - Não reserializa o XML (zero risco de perda de elementos)
+    - Matching case-insensitive (replica comportamento da Slides API)
     """
     replacements = {
         k: (str(v).strip() if v not in (None, "") else "")
         for k, v in data.items()
     }
 
-    prs = PptxPresentation(io.BytesIO(pptx_bytes))
+    src_buf = io.BytesIO(pptx_bytes)
+    out_buf = io.BytesIO()
 
-    for slide in prs.slides:
-        for shape in _iter_all_shapes(slide.shapes):
-            # Caixas de texto
-            if shape.has_text_frame:
-                _substituir_em_text_frame(shape.text_frame, replacements)
+    with zipfile.ZipFile(src_buf, 'r') as src_zip:
+        with zipfile.ZipFile(out_buf, 'w', zipfile.ZIP_DEFLATED) as out_zip:
+            for name in src_zip.namelist():
+                raw = src_zip.read(name)
 
-            # Tabelas
-            if shape.shape_type == 19:  # MSO_SHAPE_TYPE.TABLE
-                for row in shape.table.rows:
-                    for cell in row.cells:
-                        _substituir_em_text_frame(cell.text_frame, replacements)
+                # Processa apenas XMLs de slides — não toca em imagens, layouts, etc.
+                if re.match(r'ppt/slides/slide\d+\.xml$', name):
+                    xml = raw.decode('utf-8')
+                    xml = re.sub(
+                        r'<a:p\b[^>]*>.*?</a:p>',
+                        lambda m: _substituir_em_paragrafo_xml(m.group(0), replacements),
+                        xml,
+                        flags=re.DOTALL,
+                    )
+                    raw = xml.encode('utf-8')
 
-    out = io.BytesIO()
-    prs.save(out)
-    return out.getvalue()
+                out_zip.writestr(name, raw)
+
+    out_buf.seek(0)
+    return out_buf.read()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -205,9 +212,6 @@ def _duplicate_first_slide_pptx(pptx_bytes: bytes, extra_copies: int) -> bytes:
     if extra_copies <= 0:
         return pptx_bytes
 
-    import zipfile
-    import re
-
     NS_PPTX   = "http://schemas.openxmlformats.org/presentationml/2006/main"
     NS_REL    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     NS_CT     = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -220,7 +224,6 @@ def _duplicate_first_slide_pptx(pptx_bytes: bytes, extra_copies: int) -> bytes:
     with zipfile.ZipFile(src_buf, "r") as src_zip:
         names = src_zip.namelist()
 
-        # Encontra e lê o primeiro slide
         slide_names = sorted(
             [n for n in names if re.match(r"ppt/slides/slide[0-9]+\.xml$", n)],
             key=lambda x: int(re.search(r"[0-9]+", x).group()),
@@ -228,11 +231,10 @@ def _duplicate_first_slide_pptx(pptx_bytes: bytes, extra_copies: int) -> bytes:
         if not slide_names:
             return pptx_bytes
 
-        first_slide = slide_names[0]
+        first_slide     = slide_names[0]
         first_slide_num = int(re.search(r"[0-9]+", first_slide).group())
         max_slide_num   = max(int(re.search(r"[0-9]+", n).group()) for n in slide_names)
 
-        # Lê os XMLs que precisam ser modificados
         pres_root = etree.fromstring(src_zip.read("ppt/presentation.xml"))
         rels_root = etree.fromstring(src_zip.read("ppt/_rels/presentation.xml.rels"))
         ct_root   = etree.fromstring(src_zip.read("[Content_Types].xml"))
@@ -254,27 +256,22 @@ def _duplicate_first_slide_pptx(pptx_bytes: bytes, extra_copies: int) -> bytes:
             new_rel_path = f"ppt/slides/_rels/slide{new_num}.xml.rels"
             rel_id       = f"rId{max_rel_id + i + 1}"
 
-            # Copia XML do slide
             extra_files[new_path] = src_zip.read(first_slide)
 
-            # Copia .rels do slide (se existir)
             first_rel = f"ppt/slides/_rels/slide{first_slide_num}.xml.rels"
             if first_rel in names:
                 extra_files[new_rel_path] = src_zip.read(first_rel)
 
-            # Adiciona à lista de slides na apresentação
             max_id += 1
             el = etree.SubElement(sldIdLst, f"{{{NS_PPTX}}}sldId")
             el.set("id", str(max_id))
             el.set(f"{{{NS_REL}}}id", rel_id)
 
-            # Adiciona relacionamento
             rel_el = etree.SubElement(rels_root, "Relationship")
             rel_el.set("Id", rel_id)
             rel_el.set("Type", REL_SLIDE)
             rel_el.set("Target", f"slides/slide{new_num}.xml")
 
-            # Adiciona ao Content_Types
             ov = etree.SubElement(ct_root, f"{{{NS_CT}}}Override")
             ov.set("PartName", f"/{new_path}")
             ov.set("ContentType", CT_SLIDE)
@@ -282,20 +279,11 @@ def _duplicate_first_slide_pptx(pptx_bytes: bytes, extra_copies: int) -> bytes:
         with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as out_zip:
             for name in names:
                 if name == "ppt/presentation.xml":
-                    out_zip.writestr(
-                        name,
-                        etree.tostring(pres_root, xml_declaration=True, encoding="UTF-8", standalone=True),
-                    )
+                    out_zip.writestr(name, etree.tostring(pres_root, xml_declaration=True, encoding="UTF-8", standalone=True))
                 elif name == "ppt/_rels/presentation.xml.rels":
-                    out_zip.writestr(
-                        name,
-                        etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8", standalone=True),
-                    )
+                    out_zip.writestr(name, etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8", standalone=True))
                 elif name == "[Content_Types].xml":
-                    out_zip.writestr(
-                        name,
-                        etree.tostring(ct_root, xml_declaration=True, encoding="UTF-8", standalone=True),
-                    )
+                    out_zip.writestr(name, etree.tostring(ct_root, xml_declaration=True, encoding="UTF-8", standalone=True))
                 else:
                     out_zip.writestr(name, src_zip.read(name))
 
@@ -315,30 +303,27 @@ def _merge_pptx(pptx_bytes_list: list[bytes]) -> bytes:
     Mescla múltiplos PPTX trabalhando direto no ZIP/XML.
     Preserva slides, mídias e relacionamentos de cada arquivo.
     """
-    import zipfile as _zf
-    import re as _re
-
     NS_PPTX   = "http://schemas.openxmlformats.org/presentationml/2006/main"
     NS_REL    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     NS_CT     = "http://schemas.openxmlformats.org/package/2006/content-types"
     REL_SLIDE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
     CT_SLIDE  = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
 
-    zips       = [_zf.ZipFile(io.BytesIO(b), "r") for b in pptx_bytes_list]
+    zips       = [zipfile.ZipFile(io.BytesIO(b), "r") for b in pptx_bytes_list]
     base_zip   = zips[0]
     base_names = set(base_zip.namelist())
     out_buf    = io.BytesIO()
 
-    slide_count = len([n for n in base_names if _re.match(r"ppt/slides/slide[0-9]+\.xml$", n)])
+    slide_count = len([n for n in base_names if re.match(r"ppt/slides/slide[0-9]+\.xml$", n)])
     media_names = {n for n in base_names if n.startswith("ppt/media/")}
     extra_files = {}
-    new_pairs   = []  # (zip_path, rel_id)
+    new_pairs   = []
 
     for src_zip in zips[1:]:
         src_names  = set(src_zip.namelist())
         src_slides = sorted(
-            [n for n in src_names if _re.match(r"ppt/slides/slide[0-9]+\.xml$", n)],
-            key=lambda x: int(_re.search(r"[0-9]+", x).group()),
+            [n for n in src_names if re.match(r"ppt/slides/slide[0-9]+\.xml$", n)],
+            key=lambda x: int(re.search(r"[0-9]+", x).group()),
         )
         for name in src_names:
             if name.startswith("ppt/media/") and name not in media_names:
@@ -379,7 +364,7 @@ def _merge_pptx(pptx_bytes_list: list[bytes]) -> bytes:
         ov.set("PartName", f"/{slide_path}")
         ov.set("ContentType", CT_SLIDE)
 
-    with _zf.ZipFile(out_buf, "w", _zf.ZIP_DEFLATED) as out_zip:
+    with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as out_zip:
         for name in base_zip.namelist():
             if name == "ppt/presentation.xml":
                 out_zip.writestr(name, etree.tostring(pres_root, xml_declaration=True, encoding="UTF-8", standalone=True))
@@ -465,27 +450,22 @@ def gerar_pdf_consolidado(
     progress_callback=None,
 ) -> tuple[bytes, str, list[dict], str]:
     """
-    Nova abordagem — sem batchUpdate, sem limite de quota:
-
     1. Baixa cada template UMA vez por tipo (cache em memória)
-    2. Preenche placeholders LOCALMENTE via python-pptx
+    2. Preenche placeholders diretamente no XML do ZIP (preserva imagens/QR codes)
     3. Duplica slides localmente se Qtd > 1
     4. Mescla todos os PPTX localmente
     5. Faz 1 upload do PPTX mesclado → exporta como PDF
     6. Mantém o PPTX mesclado como Slides consolidado no Drive
     7. Faz 1 upload do PDF final
-
-    Retorna: (pdf_bytes, link_pdf, slides_info, link_slides)
     """
     drive, _, creds = get_services()
-
     total = len(placas)
 
     # ── 1. Download dos templates (por tipo, com cache) ──
     if progress_callback:
         progress_callback(0.02, "Baixando templates...")
 
-    tipos_unicos    = list({p["tipo"] for p in placas})
+    tipos_unicos: list[str]       = list({p["tipo"] for p in placas})
     template_cache: dict[str, bytes] = {}
 
     for i, tipo in enumerate(tipos_unicos):
@@ -495,7 +475,7 @@ def gerar_pdf_consolidado(
                 f"Baixando template {i + 1}/{len(tipos_unicos)}: {tipo}",
             )
         template_cache[tipo] = _download_template_pptx(creds, template_ids[tipo])
-        time.sleep(0.3)  # gentil com a API de export
+        time.sleep(0.3)
 
     # ── 2 + 3. Preenche e duplica cada placa localmente ──
     filled_pptx_list: list[bytes] = []
@@ -510,10 +490,8 @@ def gerar_pdf_consolidado(
             pct = 0.17 + (idx / total) * 0.55
             progress_callback(pct, f"Preenchendo placa {idx + 1}/{total}: {tipo}")
 
-        # Preenche localmente (zero API calls)
         filled = _fill_pptx_placeholders(template_cache[tipo], dados)
 
-        # Duplica slides localmente se necessário
         if qtd > 1:
             filled = _duplicate_first_slide_pptx(filled, qtd - 1)
 
@@ -553,7 +531,6 @@ def gerar_pdf_consolidado(
     if progress_callback:
         progress_callback(0.90, "Exportando PDF...")
 
-    # Aguarda um momento para o Drive processar a conversão
     time.sleep(3)
     pdf_bytes = export_as_pdf(creds, slides_id)
 
