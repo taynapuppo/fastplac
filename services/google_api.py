@@ -125,39 +125,73 @@ def _xml_escape(text: str) -> str:
 
 def _substituir_em_paragrafo_xml(para_xml: str, replacements: dict) -> str:
     """
-    Recebe o XML de um parágrafo <a:p>, concatena o texto de todos os <a:t>,
-    aplica os replacements (case-insensitive) e reconstrói colocando o texto
-    resultante no primeiro <a:t>, zerando os demais.
+    Substitui {{chave}} num parágrafo <a:p> PRESERVANDO a formatação de cada
+    run (<a:r>/<a:rPr>). Trabalha direto no XML — sem python-pptx — então
+    imagens, QR codes e qualquer elemento não-texto ficam intactos.
 
-    Trabalha diretamente no XML — sem python-pptx — então imagens,
-    QR codes e qualquer outro elemento não-texto ficam intactos.
+    Para cada placeholder, localiza as ocorrências no texto concatenado do
+    parágrafo (cobrindo placeholders fragmentados entre vários <a:t>, padrão
+    comum na exportação do Google) e coloca o valor no run ONDE o placeholder
+    começa, mantendo o rPr desse run; os pedaços restantes nos runs seguintes
+    são removidos. Placeholder contido num único run mantém 100% a formatação.
     """
-    texts = re.findall(r'<a:t(?:[^>]*)>(.*?)</a:t>', para_xml, re.DOTALL)
-    if not texts:
+    t_pattern = re.compile(r'<a:t([^>]*)>(.*?)</a:t>', re.DOTALL)
+    matches   = list(t_pattern.finditer(para_xml))
+    if not matches:
         return para_xml
 
-    full_text = ''.join(texts)
-    new_text  = full_text
+    texts    = [m.group(2) for m in matches]
+    original = list(texts)
 
     for key, value in replacements.items():
-        pattern  = re.escape(f'{{{{{key}}}}}')
-        new_text = re.sub(pattern, _xml_escape(value), new_text, flags=re.IGNORECASE)
+        rgx   = re.compile(re.escape(f'{{{{{key}}}}}'), re.IGNORECASE)
+        full  = ''.join(texts)
+        spans = [m.span() for m in rgx.finditer(full)]
+        if not spans:
+            continue
 
-    if new_text == full_text:
-        return para_xml  # Sem alteração — retorna intacto
+        # início (offset) de cada run dentro da string concatenada
+        starts, pos = [], 0
+        for t in texts:
+            starts.append(pos)
+            pos += len(t)
 
-    # Reconstrói: primeiro <a:t> recebe o novo texto, demais ficam vazios
-    first_done = False
+        def _run_of(off, starts=starts):
+            r = 0
+            for i, s in enumerate(starts):
+                if off >= s:
+                    r = i
+                else:
+                    break
+            return r
 
-    def replace_t(m):
-        nonlocal first_done
-        attrs = m.group(1)  # atributos do <a:t>, ex: xml:space="preserve"
-        if not first_done:
-            first_done = True
-            return f'<a:t{attrs}>{new_text}</a:t>'
-        return '<a:t></a:t>'
+        rep = _xml_escape(value)
+        # da direita p/ a esquerda: preserva os offsets ainda não processados
+        for a, b in reversed(spans):
+            ri, rj = _run_of(a), _run_of(b - 1)
+            oa, ob = a - starts[ri], b - starts[rj]
+            if ri == rj:
+                texts[ri] = texts[ri][:oa] + rep + texts[ri][ob:]
+            else:
+                texts[ri] = texts[ri][:oa] + rep
+                for k in range(ri + 1, rj):
+                    texts[k] = ''
+                texts[rj] = texts[rj][ob:]
 
-    return re.sub(r'<a:t([^>]*)>(.*?)</a:t>', replace_t, para_xml, flags=re.DOTALL)
+    if texts == original:
+        return para_xml  # sem alteração — parágrafo intacto
+
+    # Reconstrói cada <a:t> preservando seus atributos (ex.: xml:space)
+    idx = 0
+
+    def _repl(m):
+        nonlocal idx
+        attrs = m.group(1)
+        t     = texts[idx]
+        idx  += 1
+        return f'<a:t{attrs}>{t}</a:t>'
+
+    return t_pattern.sub(_repl, para_xml)
 
 
 def _fill_pptx_placeholders(pptx_bytes: bytes, data: dict) -> bytes:
