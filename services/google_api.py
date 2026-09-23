@@ -119,54 +119,445 @@ def _download_template_pptx(creds, template_id: str) -> bytes:
 # ─────────────────────────────────────────────────────────────
 
 def _xml_escape(text: str) -> str:
-    """Escapa caracteres especiais XML no valor substituído."""
+    """Escapa caracteres especiais XML no valor substituído (usado só em fallback)."""
     return _html_mod.escape(str(text), quote=False)
 
 
-def _substituir_em_paragrafo_xml(para_xml: str, replacements: dict) -> str:
-    """
-    Substitui {{chave}} num parágrafo <a:p> PRESERVANDO a formatação de cada
-    run (<a:r>/<a:rPr>). Trabalha direto no XML — sem python-pptx — então
-    imagens, QR codes e qualquer elemento não-texto ficam intactos.
+def format_value(key: str, val: str) -> str:
+    """Formata o texto de entrada. Para Dimensões, garante espaços ao redor da barra '/' para permitir quebra de linha."""
+    val_str = str(val).strip() if val not in (None, "") else ""
+    if not val_str:
+        return ""
+    k = key.lower()
+    if k == "dimensões" or k.startswith("peso") or k.startswith("carga"):
+        # Formata barras como ' / ' para permitir quebra de linha fluida
+        # (espaço não-quebrável antes da barra: a linha nunca começa com '/')
+        val_str = re.sub(r'\s*/\s*', '\u00a0/ ', val_str)
+    return val_str
 
-    Para cada placeholder, localiza as ocorrências no texto concatenado do
-    parágrafo (cobrindo placeholders fragmentados entre vários <a:t>, padrão
-    comum na exportação do Google) e coloca o valor no run ONDE o placeholder
-    começa, mantendo o rPr desse run; os pedaços restantes nos runs seguintes
-    são removidos. Placeholder contido num único run mantém 100% a formatação.
-    """
-    t_pattern = re.compile(r'<a:t([^>]*)>(.*?)</a:t>', re.DOTALL)
-    matches   = list(t_pattern.finditer(para_xml))
-    if not matches:
-        return para_xml
 
-    texts    = [m.group(2) for m in matches]
+# ─────────────────────────────────────────────────────────────
+#  Ajuste automático de fonte na faixa BRANCA da placa
+# ─────────────────────────────────────────────────────────────
+#
+#  Como funciona:
+#   1. Localiza no slide a faixa branca (retângulo branco largo) e onde
+#      a faixa azul começa — é o espaço disponível. Nada no template muda.
+#   2. Para cada caixa de texto dentro da faixa branca que recebeu algum
+#      {{placeholder}}, mede o texto com as larguras reais da Montserrat Bold
+#      e procura o MAIOR tamanho (até o tamanho original do template, 45pt)
+#      em que o texto cabe na largura e na altura disponíveis.
+#   3. Insere as quebras de linha explicitamente, mantendo sempre o "mm"
+#      colado ao último número (nunca sozinho na linha de baixo).
+#
+#  Títulos ("DIMENSÕES DA CARGA", "CARGA MÁXIMA | NÍVEL"...) ficam no tamanho
+#  original; só diminuem se nem no tamanho mínimo o conteúdo couber.
+#  A faixa azul, o cliente e o logo nunca são alterados.
+
+# Tipos que ficam EXATAMENTE como no template (só troca os {{campos}}, sem mexer
+# em fonte, posição ou quebra de linha). Basta o nome do tipo CONTER o texto abaixo,
+# sem diferenciar maiúsculas/acentos — ex.: "mezanino" pega "Placa Mezanino".
+TIPOS_SEM_AJUSTE_FONTE = {"flow rack", "mezanino"}
+
+LADO_DIREITO_UNIFORME = True  # título e valores do lado direito da seta com o mesmo tamanho
+CENTRALIZAR_VERTICAL = True   # centraliza o texto na altura da faixa branca (False = posição original do template)
+# Tipos com dois valores empilhados (um em cima do outro): mantêm a posição do template,
+# senão a centralização sobrepõe os valores. Comparação sem diferenciar maiúsculas.
+TIPOS_SEM_CENTRALIZAR = {"Placa Mezanino"}
+
+FONTE_MIN_PT = 18      # menor tamanho permitido
+PASSO_PT     = 1       # passo da busca
+FOLGA_LARGURA = 0.95   # usa 95% da largura (margem de segurança p/ renderização do Google)
+LINHA_FATOR   = 1.22   # altura de linha da Montserrat (ascender+descender / em)
+
+_NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_NS_P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_A = f"{{{_NS_A}}}"
+_P = f"{{{_NS_P}}}"
+
+# Larguras de avanço da Montserrat Bold (unidades por 1000 em)
+_MONT_CHARS = (' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`'
+               'abcdefghijklmnopqrstuvwxyz{|}~ÀÁÂÃÇÉÊÍÓÔÕÚÜàáâãçéêíóôõúü°ºª²³·–—×\u00a0')
+_MONT_W = [283, 289, 437, 720, 638, 877, 728, 230, 357, 358, 434, 599, 262, 386, 262, 392, 679, 392,
+           590, 592, 689, 595, 637, 620, 660, 637, 262, 262, 599, 599, 599, 589, 1035, 766, 765, 724,
+           826, 671, 639, 771, 808, 328, 541, 740, 604, 955, 808, 844, 732, 844, 735, 638, 618, 788,
+           746, 1163, 714, 676, 671, 368, 392, 368, 600, 500, 600, 617, 690, 591, 692, 631, 387, 700,
+           691, 301, 307, 655, 301, 1049, 691, 655, 690, 690, 431, 531, 435, 687, 598, 937, 595, 598,
+           543, 391, 309, 391, 599, 766, 766, 766, 766, 724, 671, 671, 328, 844, 844, 844, 788, 788,
+           617, 617, 617, 617, 591, 631, 631, 301, 655, 655, 655, 687, 687, 418, 427, 412, 430, 430,
+           302, 500, 1000, 599, 283]
+_CHAR_W = dict(zip(_MONT_CHARS, _MONT_W))
+_CHAR_W_PADRAO = 700  # caractere desconhecido: estimativa conservadora
+
+EMU_POR_PT = 12700
+
+
+def _largura_emu(texto: str, sz_centesimos: int) -> float:
+    pt = sz_centesimos / 100.0
+    return sum(_CHAR_W.get(c, _CHAR_W_PADRAO) for c in texto) / 1000.0 * pt * EMU_POR_PT
+
+
+# ── Geometria do slide ──────────────────────────────────────
+
+def _xfrm_de(el):
+    return el.find(f"{_P}spPr/{_A}xfrm") if el.tag == f"{_P}sp" else el.find(f"{_P}grpSpPr/{_A}xfrm")
+
+
+def _coletar_formas(sptree):
+    """Retorna [(elemento_sp, x, y, w, h, cor_preenchimento)] em coordenadas absolutas (EMU)."""
+    formas = []
+
+    def walk(node, ax, bx, ay, by):
+        for ch in node:
+            if ch.tag == f"{_P}grpSp":
+                xf = _xfrm_de(ch)
+                if xf is None:
+                    walk(ch, ax, bx, ay, by)
+                    continue
+                off, ext = xf.find(f"{_A}off"), xf.find(f"{_A}ext")
+                choff, chext = xf.find(f"{_A}chOff"), xf.find(f"{_A}chExt")
+                ox, oy = int(off.get("x")), int(off.get("y"))
+                ex, ey = int(ext.get("cx")), int(ext.get("cy"))
+                cx0 = int(choff.get("x")) if choff is not None else 0
+                cy0 = int(choff.get("y")) if choff is not None else 0
+                cex = int(chext.get("cx")) if chext is not None and int(chext.get("cx")) else ex or 1
+                cey = int(chext.get("cy")) if chext is not None and int(chext.get("cy")) else ey or 1
+                sx, sy = ex / cex, ey / cey
+                # filho: abs = a*(off + (x - chOff)*s) + b
+                walk(ch, ax * sx, ax * (ox - cx0 * sx) + bx, ay * sy, ay * (oy - cy0 * sy) + by)
+            elif ch.tag == f"{_P}sp":
+                xf = _xfrm_de(ch)
+                if xf is None:
+                    continue
+                off, ext = xf.find(f"{_A}off"), xf.find(f"{_A}ext")
+                if off is None or ext is None:
+                    continue
+                x = ax * int(off.get("x")) + bx
+                y = ay * int(off.get("y")) + by
+                w = ax * int(ext.get("cx"))
+                h = ay * int(ext.get("cy"))
+                cor = None
+                sf = ch.find(f"{_P}spPr/{_A}solidFill/{_A}srgbClr")
+                if sf is not None:
+                    cor = (sf.get("val") or "").upper()
+                formas.append((ch, x, y, w, h, cor))
+
+    walk(sptree, 1.0, 0.0, 1.0, 0.0)
+    return formas
+
+
+def _faixa_branca(formas, slide_w):
+    """(topo, base) da faixa branca visível, ou None se não encontrada."""
+    largas = [f for f in formas if f[5] and f[3] >= 0.6 * slide_w]
+    brancas = [f for f in largas if f[5] == "FFFFFF"]
+    if not brancas:
+        return None
+    b = max(brancas, key=lambda f: f[3] * f[4])
+    topo, base = b[2], b[2] + b[4]
+    for f in largas:
+        if f[5] == "FFFFFF" or f is b:
+            continue
+        f_top, f_bot = f[2], f[2] + f[4]
+        if topo < f_top < base:            # faixa colorida começando por cima da branca (ex.: azul)
+            base = min(base, f_top)
+        elif f_top <= topo < f_bot < base:  # faixa colorida invadindo o topo
+            topo = f_bot
+    return topo, base
+
+
+# ── Layout de texto ────────────────────────────────────────
+
+def _sz_do_run(rpr, padrao):
+    if rpr is not None and rpr.get("sz"):
+        return int(rpr.get("sz"))
+    return padrao
+
+
+def _info_paragrafo(p):
+    """Extrai sequência de itens ('t', texto, sz) / ('br',) e parâmetros de espaçamento."""
+    ppr = p.find(f"{_A}pPr")
+    ln_pct, ln_pts, bef, aft = 1.0, None, 0.0, 0.0
+    if ppr is not None:
+        v = ppr.find(f"{_A}lnSpc/{_A}spcPct")
+        if v is not None: ln_pct = int(v.get("val")) / 100000.0
+        v = ppr.find(f"{_A}lnSpc/{_A}spcPts")
+        if v is not None: ln_pts = int(v.get("val")) / 100.0
+        v = ppr.find(f"{_A}spcBef/{_A}spcPts")
+        if v is not None: bef = int(v.get("val")) / 100.0
+        v = ppr.find(f"{_A}spcAft/{_A}spcPts")
+        if v is not None: aft = int(v.get("val")) / 100.0
+    end = p.find(f"{_A}endParaRPr")
+    sz_end = _sz_do_run(end, 1800)
+    itens = []
+    for ch in p:
+        if ch.tag in (f"{_A}r", f"{_A}fld"):
+            t = ch.find(f"{_A}t")
+            itens.append(("t", (t.text or "") if t is not None else "", _sz_do_run(ch.find(f"{_A}rPr"), sz_end)))
+        elif ch.tag == f"{_A}br":
+            itens.append(("br",))
+    return itens, ln_pct, ln_pts, bef, aft, sz_end
+
+
+def _quebrar_linhas(itens, larg_max, escala_sz):
+    """
+    Quebra gulosa por espaços comuns (NBSP não quebra).
+    Retorna (linhas, posicoes_quebra) — posicoes são índices no texto
+    concatenado do parágrafo onde há um espaço a ser trocado por quebra.
+    """
+    # achata em caracteres com tamanho
+    chars = []  # (char, sz) ou ('\n', None) para <a:br>
+    for it in itens:
+        if it[0] == "br":
+            chars.append(("\n", None))
+        else:
+            sz = escala_sz(it[2])
+            chars.extend((c, sz) for c in it[1])
+
+    linhas, quebras = [], []
+    larg_linha, linha_txt = 0.0, ""
+    pos = 0           # posição no texto (sem contar <a:br>)
+    ult_esp = None    # (pos, larg_ate_espaco, idx_linha_txt)
+    for c, sz in chars:
+        if c == "\n":
+            linhas.append(linha_txt.rstrip(" "))
+            larg_linha, linha_txt, ult_esp = 0.0, "", None
+            continue
+        w = _largura_emu(c, sz)
+        if c == " ":
+            ult_esp = (pos, larg_linha, len(linha_txt))
+        if c != " " and larg_linha + w > larg_max and linha_txt.strip():
+            if ult_esp is not None:
+                p_esp, _, idx = ult_esp
+                quebras.append(p_esp)
+                linhas.append(linha_txt[:idx].rstrip(" "))
+                resto = linha_txt[idx + 1:]
+                linha_txt = resto
+                larg_linha = sum(_largura_emu(ch, sz) for ch in resto)  # aproximação (mesmo sz)
+            else:
+                # palavra única maior que a linha: o renderizador quebra no meio
+                linhas.append(linha_txt)
+                linha_txt, larg_linha = "", 0.0
+            ult_esp = None
+        linha_txt += c
+        larg_linha += w
+        pos += 1
+    linhas.append(linha_txt.rstrip(" "))
+    return linhas, quebras
+
+
+def _medir_forma(paragrafos, sz_para, larg_max):
+    """
+    paragrafos: lista de _info_paragrafo; sz_para: função(idx_par, sz_original)->sz.
+    Retorna (altura_total_emu, cabe_na_largura, quebras_por_paragrafo).
+    """
+    altura, cabe, todas_quebras = 0.0, True, []
+    for i, (itens, ln_pct, ln_pts, bef, aft, sz_end) in enumerate(paragrafos):
+        f = (lambda s, i=i: sz_para(i, s))
+        linhas, quebras = _quebrar_linhas(itens, larg_max, f)
+        todas_quebras.append(quebras)
+        tams = [f(it[2]) for it in itens if it[0] == "t" and it[1]] or [f(sz_end)]
+        maior = max(tams) / 100.0
+        for ln in linhas:
+            if ln and _largura_emu(ln, max(tams)) > larg_max * 1.001 and " " not in ln.strip():
+                cabe = False  # palavra única não cabe
+        lh = ln_pts if ln_pts else maior * LINHA_FATOR * ln_pct
+        altura += (len(linhas) * lh + bef + aft) * EMU_POR_PT
+    return altura, cabe, todas_quebras
+
+
+def _inserir_quebras(p, posicoes):
+    """Troca os espaços nas posições indicadas por <a:br/> (copiando a formatação do run)."""
+    if not posicoes:
+        return
+    alvo = set(posicoes)
+    pos = 0
+    for r in list(p):
+        if r.tag not in (f"{_A}r", f"{_A}fld"):
+            continue
+        t = r.find(f"{_A}t")
+        txt = (t.text or "") if t is not None else ""
+        ini = pos
+        pos += len(txt)
+        if r.tag != f"{_A}r":
+            continue
+        cortes = sorted(q - ini for q in alvo if ini <= q < pos)
+        if not cortes:
+            continue
+        partes, ant = [], 0
+        for c in cortes:
+            partes.append(txt[ant:c])
+            ant = c + 1  # remove o espaço
+        partes.append(txt[ant:])
+        rpr = r.find(f"{_A}rPr")
+        pai, idx = r.getparent(), r.getparent().index(r)
+        t.text = partes[0]
+        for parte in partes[1:]:
+            br = etree.Element(f"{_A}br")
+            if rpr is not None:
+                br.append(copy.deepcopy(rpr))
+            novo = copy.deepcopy(r)
+            novo.find(f"{_A}t").text = parte
+            idx += 1; pai.insert(idx, br)
+            idx += 1; pai.insert(idx, novo)
+
+
+def _aplicar_sz(p, sz, sz_padrao, forcar=False):
+    """Limita o tamanho dos runs do parágrafo a `sz` (forcar=True: usa exatamente `sz`)."""
+    for r in p.findall(f"{_A}r"):
+        if r.find(f"{_A}rPr") is None:
+            r.insert(0, etree.Element(f"{_A}rPr"))
+    for el in p.iter(f"{_A}rPr", f"{_A}endParaRPr"):
+        el.set("sz", str(sz if forcar else min(_sz_do_run(el, sz_padrao), sz)))
+
+
+def _ajustar_forma(sp, x, y, w, h, faixa, slide_w, paras_alterados, permitir_centralizar=True):
+    body = sp.find(f"{_P}txBody")
+    if body is None:
+        return
+    bpr = body.find(f"{_A}bodyPr")
+    g = (lambda k, d: int(bpr.get(k)) if bpr is not None and bpr.get(k) is not None else d)
+    lins, rins, tins, bins = g("lIns", 91440), g("rIns", 91440), g("tIns", 45720), g("bIns", 45720)
+    anchor = (bpr.get("anchor") if bpr is not None else None) or "t"
+    sem_quebra = bpr is not None and bpr.get("wrap") == "none"
+
+    topo, base = faixa
+    margem_y = 0.04 * (base - topo)
+    margem_x = 0.02 * slide_w
+
+    x0 = x + lins
+    x1 = min(x + w - rins, slide_w - margem_x)   # caixas que "vazam" do slide são limitadas à borda
+    larg = (x1 - x0) * FOLGA_LARGURA
+
+    # Centralização vertical: a caixa passa a ocupar toda a faixa branca (com margem)
+    # e o texto fica ancorado no meio. Só para caixas fora de grupo (coordenadas diretas).
+    centralizar = CENTRALIZAR_VERTICAL and permitir_centralizar and bpr is not None and sp.getparent() is not None and sp.getparent().tag == f"{_P}spTree"
+    if centralizar:
+        novo_y = topo + margem_y
+        novo_h = (base - topo) - 2 * margem_y
+        alt = novo_h - tins - bins
+    elif anchor == "ctr":
+        c = (y + tins + y + h - bins) / 2
+        alt = 2 * min(c - (topo + margem_y), (base - margem_y) - c)
+    elif anchor == "b":
+        alt = (y + h - bins) - (topo + margem_y)
+    else:
+        alt = (base - margem_y) - (y + tins)
+    if larg <= 0 or alt <= 0:
+        return
+
+    pars = body.findall(f"{_A}p")
+    # Parágrafos vazios no fim da caixa só ocupam altura (e tiram o texto do centro):
+    # são removidos, mantendo sempre pelo menos um parágrafo.
+    while len(pars) > 1 and not "".join(t.text or "" for t in pars[-1].iter(f"{_A}t")).strip() \
+            and pars[-1].find(f"{_A}br") is None:
+        body.remove(pars[-1]); pars.pop()
+    infos = [_info_paragrafo(p) for p in pars]
+
+    # Parágrafos variáveis: os que receberam placeholder + legenda (F x P x A)
+    variaveis = set()
+    for i, p in enumerate(pars):
+        txt = "".join(t.text or "" for t in p.iter(f"{_A}t")).upper()
+        if p in paras_alterados or re.search(r'F\s*X\s*P\s*X\s*A', txt):
+            variaveis.add(i)
+    if not variaveis:
+        return
+
+    # Lado DIREITO da seta: título ("CARGA MÁXIMA | NÍVEL"...) e valores ficam todos
+    # do MESMO tamanho, o maior que couber (até o maior tamanho da caixa no template).
+    uniforme = LADO_DIREITO_UNIFORME and x0 > slide_w * 0.4
+    if uniforme:
+        variaveis = {i for i, inf in enumerate(infos) if any(it[0] == "t" and it[1].strip() for it in inf[0])} or variaveis
+
+    larg_busca = float("inf") if sem_quebra else larg
+    sz_max = max(max([it[2] for it in infos[i][0] if it[0] == "t"] or [infos[i][5]]) for i in variaveis)
+    if uniforme:
+        sz_max = max(sz_max, max(max([it[2] for it in inf[0] if it[0] == "t"] or [inf[5]]) for inf in infos))
+    sz_min = FONTE_MIN_PT * 100
+
+    def testar(sz_var, fator_fixo=1.0):
+        def f(i, s):
+            if i in variaveis:
+                return sz_var if uniforme else min(s, sz_var)
+            return int(round(s * fator_fixo / 50.0) * 50)
+        altura, cabe, quebras = _medir_forma(infos, f, larg_busca)
+        return (cabe and altura <= alt), quebras, f
+
+    escolha = None
+    # 1) títulos fixos, conteúdo variável
+    sz = sz_max
+    while sz >= sz_min:
+        ok, quebras, f = testar(sz)
+        if ok:
+            escolha = (sz, 1.0, quebras); break
+        sz -= PASSO_PT * 100
+    # 2) não coube nem no mínimo: reduz os títulos junto
+    if escolha is None:
+        fator = 0.95
+        while fator >= 0.5:
+            ok, quebras, f = testar(sz_min, fator)
+            if ok:
+                escolha = (sz_min, fator, quebras); break
+            fator -= 0.05
+    if escolha is None:
+        _, quebras, _ = testar(sz_min, 0.5)
+        escolha = (sz_min, 0.5, quebras)
+
+    sz_var, fator, quebras = escolha
+
+    if centralizar:
+        xf = sp.find(f"{_P}spPr/{_A}xfrm")
+        xf.find(f"{_A}off").set("y", str(int(round(novo_y))))
+        xf.find(f"{_A}ext").set("cy", str(int(round(novo_h))))
+        bpr.set("anchor", "ctr")
+        for fit in (f"{_A}spAutoFit", f"{_A}normAutofit", f"{_A}noAutofit"):
+            el = bpr.find(fit)
+            if el is not None:
+                bpr.remove(el)
+        bpr.append(etree.Element(f"{_A}noAutofit"))
+    for i, p in enumerate(pars):
+        if i in variaveis:
+            _aplicar_sz(p, sz_var, infos[i][5], forcar=uniforme)
+            if not sem_quebra:
+                _inserir_quebras(p, quebras[i])
+        elif fator < 1.0:
+            for el in p.iter(f"{_A}rPr", f"{_A}endParaRPr"):
+                if el.get("sz"):
+                    el.set("sz", str(int(round(int(el.get("sz")) * fator / 50.0) * 50)))
+
+
+# ── Substituição de placeholders ───────────────────────────
+
+# unidades que ficam sempre coladas ao número anterior (nunca sozinhas na linha)
+_UNIDADES = r'(mm|kg|t)'
+_RE_MM = re.compile(r'(\d)[ \t]+' + _UNIDADES + r'\b', re.IGNORECASE)
+
+
+def _substituir_paragrafo(p, replacements) -> bool:
+    """Substitui {{chave}} nos runs de um parágrafo preservando a formatação. Retorna True se alterou."""
+    ts = [t for t in p.iter(f"{_A}t")]
+    if not ts:
+        return False
+    texts = [t.text or "" for t in ts]
     original = list(texts)
 
     for key, value in replacements.items():
         rgx   = re.compile(re.escape(f'{{{{{key}}}}}'), re.IGNORECASE)
-        full  = ''.join(texts)
-        spans = [m.span() for m in rgx.finditer(full)]
+        spans = [m.span() for m in rgx.finditer(''.join(texts))]
         if not spans:
             continue
+        rep = str(value).strip() if value not in (None, "") else ""
 
-        # início (offset) de cada run dentro da string concatenada
         starts, pos = [], 0
         for t in texts:
-            starts.append(pos)
-            pos += len(t)
+            starts.append(pos); pos += len(t)
 
-        def _run_of(off, starts=starts):
+        def _run_of(off):
             r = 0
             for i, s in enumerate(starts):
-                if off >= s:
-                    r = i
-                else:
-                    break
+                if off >= s: r = i
+                else: break
             return r
 
-        rep = _xml_escape(value)
-        # da direita p/ a esquerda: preserva os offsets ainda não processados
         for a, b in reversed(spans):
             ri, rj = _run_of(a), _run_of(b - 1)
             oa, ob = a - starts[ri], b - starts[rj]
@@ -174,60 +565,89 @@ def _substituir_em_paragrafo_xml(para_xml: str, replacements: dict) -> str:
                 texts[ri] = texts[ri][:oa] + rep + texts[ri][ob:]
             else:
                 texts[ri] = texts[ri][:oa] + rep
-                for k in range(ri + 1, rj):
-                    texts[k] = ''
+                for k in range(ri + 1, rj): texts[k] = ''
                 texts[rj] = texts[rj][ob:]
 
     if texts == original:
-        return para_xml  # sem alteração — parágrafo intacto
+        return False
 
-    # Reconstrói cada <a:t> preservando seus atributos (ex.: xml:space)
-    idx = 0
+    # "mm" sempre colado ao número (espaço não-quebrável), inclusive entre runs diferentes
+    for i in range(len(texts)):
+        texts[i] = _RE_MM.sub('\\1\u00a0\\2', texts[i])
+        m = re.match(r'^[ \t]+' + _UNIDADES + r'\b', texts[i], re.IGNORECASE)
+        if m:
+            ant = next((texts[j] for j in range(i - 1, -1, -1) if texts[j]), "")
+            if ant[-1:].isdigit():
+                texts[i] = '\u00a0' + texts[i].lstrip(" \t")
 
-    def _repl(m):
-        nonlocal idx
-        attrs = m.group(1)
-        t     = texts[idx]
-        idx  += 1
-        return f'<a:t{attrs}>{t}</a:t>'
-
-    return t_pattern.sub(_repl, para_xml)
+    for t, txt in zip(ts, texts):
+        t.text = txt
+    return True
 
 
-def _fill_pptx_placeholders(pptx_bytes: bytes, data: dict) -> bytes:
-    """
-    Substitui {{chave}} diretamente no XML do PPTX via manipulação de ZIP.
+def _normalizar_tipo(tipo) -> str:
+    """Compara nomes de tipo ignorando maiúsculas, acentos e espaços extras."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(tipo or "")).encode("ascii", "ignore").decode()
+    return " ".join(t.lower().split())
 
-    Não passa pelo modelo de objetos do python-pptx, portanto:
-    - Preserva 100% das imagens e QR codes originais
-    - Lida com placeholders fragmentados entre múltiplos runs
-    - Não reserializa o XML (zero risco de perda de elementos)
-    - Matching case-insensitive (replica comportamento da Slides API)
-    """
-    replacements = {
-        k: (str(v).strip() if v not in (None, "") else "")
-        for k, v in data.items()
-    }
+
+def _processar_slide(xml_bytes: bytes, replacements: dict, slide_w: int, ajustar: bool, centralizar: bool = True) -> bytes:
+    root = etree.fromstring(xml_bytes)
+    alterados = set()
+    for p in root.iter(f"{_A}p"):
+        if _substituir_paragrafo(p, replacements):
+            alterados.add(p)
+
+    if ajustar and alterados:
+        sptree = root.find(f"{_P}cSld/{_P}spTree")
+        formas = _coletar_formas(sptree)
+        faixa  = _faixa_branca(formas, slide_w)
+        if faixa is None:
+            print("[AVISO] Faixa branca não encontrada no template — fonte não ajustada.")
+        else:
+            topo, base = faixa
+            alvos = [f for f in formas
+                     if topo <= f[2] + f[4] / 2 <= base
+                     and any(p in alterados for p in f[0].iter(f"{_A}p"))]
+            for sp, x, y, w, h, _ in alvos:
+                # Caixas empilhadas (outra caixa alvo na mesma coluna, ex.: Mezanino com
+                # m² e plano) nunca são centralizadas — senão uma fica em cima da outra.
+                empilhada = any(
+                    o[0] is not sp and min(x + w, o[1] + o[3]) - max(x, o[1]) > 0.5 * min(w, o[3])
+                    for o in alvos
+                )
+                _ajustar_forma(sp, x, y, w, h, faixa, slide_w, alterados,
+                               permitir_centralizar=centralizar and not empilhada)
+
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _fill_pptx_placeholders(pptx_bytes: bytes, data: dict, tipo: str = "") -> bytes:
+    replacements = {k: (format_value(k, str(v)) if v not in (None, "") else "") for k, v in data.items()}
+    tipo_norm = _normalizar_tipo(tipo)
+    ajustar = not any(_normalizar_tipo(t) in tipo_norm for t in TIPOS_SEM_AJUSTE_FONTE)
+    print(f"[FastPlac] tipo={tipo!r} -> ajuste de fonte/posição: {'SIM' if ajustar else 'NÃO (igual ao template)'}")
+    centralizar = _normalizar_tipo(tipo) not in {_normalizar_tipo(t) for t in TIPOS_SEM_CENTRALIZAR}
 
     src_buf = io.BytesIO(pptx_bytes)
     out_buf = io.BytesIO()
 
     with zipfile.ZipFile(src_buf, 'r') as src_zip:
+        slide_w = 17995900
+        try:
+            pres = etree.fromstring(src_zip.read("ppt/presentation.xml"))
+            sld = pres.find(f"{_P}sldSz")
+            if sld is not None:
+                slide_w = int(sld.get("cx"))
+        except Exception:
+            pass
+
         with zipfile.ZipFile(out_buf, 'w', zipfile.ZIP_DEFLATED) as out_zip:
             for name in src_zip.namelist():
                 raw = src_zip.read(name)
-
-                # Processa apenas XMLs de slides — não toca em imagens, layouts, etc.
                 if re.match(r'ppt/slides/slide\d+\.xml$', name):
-                    xml = raw.decode('utf-8')
-                    xml = re.sub(
-                        r'<a:p\b[^>]*>.*?</a:p>',
-                        lambda m: _substituir_em_paragrafo_xml(m.group(0), replacements),
-                        xml,
-                        flags=re.DOTALL,
-                    )
-                    raw = xml.encode('utf-8')
-
+                    raw = _processar_slide(raw, replacements, slide_w, ajustar, centralizar)
                 out_zip.writestr(name, raw)
 
     out_buf.seek(0)
@@ -353,16 +773,40 @@ def _merge_pptx(pptx_bytes_list: list[bytes]) -> bytes:
     extra_files = {}
     new_pairs   = []
 
+    # Cada template numera as imagens do seu jeito (no Porta Paletes o QR do site é
+    # image1.png, no Mezanino image1.png é o QR "Fale conosco"...). Antes, imagens com
+    # o mesmo nome eram consideradas iguais e os slides dos outros templates passavam
+    # a apontar para a imagem errada — os QR codes trocavam de lugar/tamanho.
+    # Agora as imagens são comparadas pelo CONTEÚDO e renomeadas quando necessário.
+    import hashlib
+    hash_para_nome = {hashlib.md5(base_zip.read(n)).hexdigest(): n for n in media_names}
+    contador_media = [0]
+
+    def _nome_unico(ext):
+        while True:
+            contador_media[0] += 1
+            nome = f"ppt/media/fp_img{contador_media[0]}{ext}"
+            if nome not in media_names:
+                return nome
+
     for src_zip in zips[1:]:
         src_names  = set(src_zip.namelist())
         src_slides = sorted(
             [n for n in src_names if re.match(r"ppt/slides/slide[0-9]+\.xml$", n)],
             key=lambda x: int(re.search(r"[0-9]+", x).group()),
         )
-        for name in src_names:
-            if name.startswith("ppt/media/") and name not in media_names:
-                extra_files[name] = src_zip.read(name)
-                media_names.add(name)
+        mapa_media = {}   # "imageX.png" deste template -> nome final no arquivo mesclado
+        for name in sorted(src_names):
+            if not name.startswith("ppt/media/"):
+                continue
+            dados = src_zip.read(name)
+            h = hashlib.md5(dados).hexdigest()
+            if h not in hash_para_nome:
+                final = name if name not in media_names else _nome_unico(os.path.splitext(name)[1])
+                extra_files[final] = dados
+                media_names.add(final)
+                hash_para_nome[h] = final
+            mapa_media[name.split("/")[-1]] = hash_para_nome[h].split("/")[-1]
         for slide_path in src_slides:
             slide_count += 1
             new_path = f"ppt/slides/slide{slide_count}.xml"
@@ -370,7 +814,13 @@ def _merge_pptx(pptx_bytes_list: list[bytes]) -> bytes:
             rel_src = slide_path.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
             rel_dst = new_path.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
             if rel_src in src_names:
-                extra_files[rel_dst] = src_zip.read(rel_src)
+                rels_xml = src_zip.read(rel_src).decode("utf-8")
+                rels_xml = re.sub(
+                    r'Target="\.\./media/([^"]+)"',
+                    lambda m: f'Target="../media/{mapa_media.get(m.group(1), m.group(1))}"',
+                    rels_xml,
+                )
+                extra_files[rel_dst] = rels_xml.encode("utf-8")
             new_pairs.append((new_path, f"rId{100 + slide_count}"))
 
     pres_root = etree.fromstring(base_zip.read("ppt/presentation.xml"))
@@ -393,6 +843,16 @@ def _merge_pptx(pptx_bytes_list: list[bytes]) -> bytes:
         el.set("Target", slide_path.replace("ppt/", ""))
 
     ct_root = etree.fromstring(base_zip.read("[Content_Types].xml"))
+    # garante o tipo de conteúdo para extensões de imagem vindas de outros templates
+    exts = {e.get("Extension", "").lower() for e in ct_root.findall(f"{{{NS_CT}}}Default")}
+    tipos_img = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+                 "svg": "image/svg+xml", "emf": "image/x-emf", "wmf": "image/x-wmf"}
+    for n in extra_files:
+        ext = os.path.splitext(n)[1].lstrip(".").lower()
+        if n.startswith("ppt/media/") and ext and ext not in exts and ext in tipos_img:
+            d = etree.SubElement(ct_root, f"{{{NS_CT}}}Default")
+            d.set("Extension", ext); d.set("ContentType", tipos_img[ext])
+            exts.add(ext)
     for slide_path, _ in new_pairs:
         ov = etree.SubElement(ct_root, f"{{{NS_CT}}}Override")
         ov.set("PartName", f"/{slide_path}")
@@ -524,7 +984,7 @@ def gerar_pdf_consolidado(
             pct = 0.17 + (idx / total) * 0.55
             progress_callback(pct, f"Preenchendo placa {idx + 1}/{total}: {tipo}")
 
-        filled = _fill_pptx_placeholders(template_cache[tipo], dados)
+        filled = _fill_pptx_placeholders(template_cache[tipo], dados, tipo=tipo)
 
         if qtd > 1:
             filled = _duplicate_first_slide_pptx(filled, qtd - 1)
