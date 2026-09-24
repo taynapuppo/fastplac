@@ -462,6 +462,6 @@ st.markdown(f"""
     color: #888;
     text-align: center;
 ">
-    {ano} © FastPlac by <a href="https://aguiasistemas.com.br/" target="_blank" style="color:#242480; font-weight:700; text-decoration:none;">Águia Sistemas</a> &nbsp;·&nbsp; Version 1.0.0
+    {ano} © FastPlac by <a href="https://aguiasistemas.com.br/" target="_blank" style="color:#242480; font-weight:700; text-decoration:none;">Águia Sistemas</a> &nbsp;·&nbsp; Version 1.1.0
 </div>
 """, unsafe_allow_html=True)
